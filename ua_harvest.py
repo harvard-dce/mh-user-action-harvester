@@ -1,75 +1,132 @@
+import json
 
 import boto3
 import click
 import arrow
 import pyhorn
+import logging
 import requests
+import pyloggly
+import requests_cache
 from os import getenv
 from os.path import dirname, join
+from logging.handlers import SysLogHandler
+
+import time
 from repoze.lru import lru_cache
-import requests_cache
+from botocore.exceptions import ClientError
 
-# sigh. pyhorn caching is so dumb.
-requests_cache.uninstall_cache()
-
-pyhorn.client._session = requests.Session()
 from dotenv import load_dotenv
 load_dotenv(join(dirname(__file__), '.env'))
 
-MATTERHORN_REST_USER=getenv('MATTERHORN_REST_USER')
-MATTERHORN_REST_PASS=getenv('MATTERHORN_REST_PASS')
+MATTERHORN_REST_USER = getenv('MATTERHORN_REST_USER')
+MATTERHORN_REST_PASS = getenv('MATTERHORN_REST_PASS')
+MATTERHORN_HOST = getenv('MATTERHORN_HOST')
+DEFAULT_INTERVAL = getenv('DEFAULT_INTERVAL', 2)
+LOGGLY_TOKEN = getenv('LOGGLY_TOKEN')
+LOGGLY_TAGS = getenv('LOGGLY_TAGS')
+S3_LAST_ACTION_TS_BUCKET = getenv('S3_LAST_ACTION_TS_BUCKET', 'mh-user-action-harvester')
+S3_LAST_ACTION_TS_KEY = getenv('S3_LAST_ACTION_TS_KEY')
+SQS_QUEUE_NAME = getenv('SQS_QUEUE_NAME')
+
+# sigh. pyhorn caching is so dumb.
+requests_cache.uninstall_cache()
+pyhorn.client._session = requests.Session()
+
+log = logging.getLogger('mh-user-action-harvester')
+log.setLevel(logging.INFO)
+log.addHandler(SysLogHandler(address='/dev/log'))
+if LOGGLY_TOKEN is not None:
+    log.addHandler(
+        pyloggly.LogglyHandler(
+            LOGGLY_TOKEN,
+            'https://logs-01.loggly.com',
+            tags=','.join('mh-user-action-harvester', LOGGLY_TAGS)
+        )
+    )
+
+sqs = boto3.resource('sqs')
+s3 = boto3.resource('s3')
 
 @click.command()
-@click.option('-H', '--hostname')
-@click.option('-s', '--start', help='YYYYMMDD')
-@click.option('-e', '--end', default=None, help='YYYYMMDD. Default = today')
-@click.option('-u', '--user', help='Matterhorn rest user')
-@click.option('-p', '--password', help='Matterhorn rest password')
-@click.option('-b', '--batch-size', default=1000, help='Actions to process per request')
-@click.option('-w', '--wait', default=1, help='seconds to wait between requests')
-@click.option('-q', '--queue-name', help='SQS queue name')
-def harvest(hostname, start, end, user, password, batch_size, wait, queue_name):
+@click.option('-s', '--start', help='YYYYMMDDHHmmss')
+@click.option('-e', '--end', help='YYYYMMDDHHmmss; default=now')
+@click.option('-w', '--wait', default=1,
+              help="Seconds to wait between batch requests")
+@click.option('-H', '--hostname', default=MATTERHORN_HOST,
+              help="Matterhorn engage hostname")
+@click.option('-u', '--user', default=MATTERHORN_REST_USER,
+              help='Matterhorn rest user')
+@click.option('-p', '--password', default=MATTERHORN_REST_PASS,
+              help='Matterhorn rest password')
+@click.option('-q', '--queue-name', default=SQS_QUEUE_NAME,
+              help='SQS queue name')
+@click.option('-b', '--batch-size', default=1000,
+              help='number of actions per request')
+@click.option('-i', '--interval', default=DEFAULT_INTERVAL,
+              help='Harvest action from this many mintues ago')
+def harvest(start, end, wait, hostname, user, password, queue_name,
+            batch_size, interval):
 
     mh = pyhorn.MHClient('http://' + hostname, user, password, timeout=30)
+    queue = sqs.create_queue(QueueName=queue_name)
 
-    start = arrow.get(start_day, 'YYYYMMDD')
-    end = (end_day is None) and arrow.now() or arrow.get(end_day, 'YYYYMMDD')
+    if end is None:
+        end = arrow.now().format('YYYYMMDDHHmmss')
 
-    for day in arrow.Arrow.range('day', start, end):
+    if start is None:
+        start = get_last_action_ts()
+        if start is None:
+            start = arrow.now() \
+                .replace(minutes=-interval) \
+                .format('YYYYMMDDHHmmss')
 
-        print "Working on day %s" % day.format('YYYY-MM-DD')
+    log.info("Fetching user actions from %s to %s", start, end)
+
+    offset = 0
+    batch_count = 0
+    action_count = 0
+    fail_count = 0
+    last_action = None
+
+    while True:
 
         req_params = {
-            'day': day.format('YYYYMMDD'),
+            'start': start,
+            'end': end,
             'limit': batch_size,
-            'offset': 0
+            'offset': offset
         }
 
-        out_path = os.path.join(outdir, "actions.%s.jsonl.gz" % day.format('YYYY-MM-DD'))
+        actions = mh.user_actions(**req_params)
 
-        with gzip.open(out_path, 'wb') as of:
+        if len(actions) == 0:
+            log.info("No more actions")
+            break
 
-            batch_count = 1
-            while True:
+        batch_count += 1
+        log.info("Batch %d: %d actions", batch_count, len(actions))
 
-                actions = mh.user_actions(**req_params)
+        for action in actions:
+            last_action = action
+            try:
+                rec = create_action_rec(action)
+                queue.send_message(MessageBody=json.dumps(rec))
+                action_count += 1
+            except Exception as e:
+                log.error("Exception during rec creation for %s: %s", action.id, str(e))
+                fail_count += 1
+                continue
 
-                if len(actions) == 0:
-                    break
+        time.sleep(wait)
+        offset += batch_size
 
-                print "Batch %d: %d actions" % (batch_count, len(actions))
+    log.info("Total actions: %d, total batches: %d, total failed: %d",
+             action_count, batch_count, fail_count)
 
-                for action in actions:
-                    try:
-                        rec = create_action_rec(action)
-                    except Exception as e:
-                        print "Exception during rec creation for %s: %s" % (action.id, str(e))
-                        continue
-                    print >>of, json.dumps(rec)
-
-                time.sleep(wait)
-                req_params['offset'] += batch_size
-                batch_count += 1
+    if last_action is not None:
+        last_action_ts = arrow.get(last_action.created).format('YYYYMMDDHHmmss')
+        set_last_action_ts(last_action_ts)
 
 def create_action_rec(action):
 
@@ -127,12 +184,30 @@ def get_episode(client, mpid):
 
 def is_live(action, episode):
     """
-    here again, if we call action.is_live()
+    here again, if we call action.is_live() we won't get the cached episode resp
     """
     action_created = arrow.get(action.created)
     mp_start = arrow.get(episode.mediapackage.start)
     mp_duration_sec = int(episode.mediapackage.duration) / 1000
     return action_created <= mp_start.replace(seconds=+mp_duration_sec)
+
+# s3 state bucket helpers
+def set_last_action_ts(last_action_ts):
+    bucket = get_or_create_bucket()
+    bucket.put_object(Key=S3_LAST_ACTION_TS_KEY, Body=last_action_ts)
+
+def get_last_action_ts():
+    bucket = get_or_create_bucket()
+    try:
+        obj = bucket.Object(S3_LAST_ACTION_TS_KEY).get()
+        return obj['Body'].read()
+    except ClientError:
+        log.debug("No last_update value found")
+        return None
+
+def get_or_create_bucket():
+    return s3.create_bucket(Bucket=S3_LAST_ACTION_TS_BUCKET) # this is idempotent
+
 
 if __name__ == '__main__':
     harvest()
