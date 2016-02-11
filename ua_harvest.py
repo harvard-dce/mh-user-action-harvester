@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 
+import sys
 import json
 import boto3
 import click
@@ -11,7 +12,6 @@ import pyloggly
 import requests_cache
 from os import getenv
 from os.path import dirname, join
-from logging.handlers import SysLogHandler
 
 import time
 from repoze.lru import lru_cache
@@ -36,9 +36,9 @@ pyhorn.client._session = requests.Session()
 
 log = logging.getLogger('mh-user-action-harvester')
 log.setLevel(logging.INFO)
-syslog = SysLogHandler(address='/dev/log')
-syslog.setFormatter(logging.Formatter("%(name)s %(levelname)s %(message)s"))
-log.addHandler(syslog)
+console = logging.StreamHandler(stream=sys.stdout)
+console.setFormatter(logging.Formatter("%(name)s %(levelname)s %(message)s"))
+log.addHandler(console)
 if LOGGLY_TOKEN is not None:
     log.addHandler(
         pyloggly.LogglyHandler(
