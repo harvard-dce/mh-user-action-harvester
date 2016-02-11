@@ -42,8 +42,8 @@ if LOGGLY_TOKEN is not None:
     log.addHandler(
         pyloggly.LogglyHandler(
             LOGGLY_TOKEN,
-            'https://logs-01.loggly.com',
-            tags=','.join('mh-user-action-harvester', LOGGLY_TAGS)
+            'logs-01.loggly.com',
+            tags=','.join(['mh-user-action-harvester', LOGGLY_TAGS])
         )
     )
 
@@ -124,7 +124,12 @@ def harvest(start, end, wait, hostname, user, password, queue_name,
         offset += batch_size
 
     log.info("Total actions: %d, total batches: %d, total failed: %d",
-             action_count, batch_count, fail_count)
+             action_count, batch_count, fail_count,
+             extra={
+                 'actions': action_count,
+                 'batches': batch_count,
+                 'failures': fail_count
+             })
 
     if last_action is not None:
         last_action_ts = arrow.get(last_action.created).format('YYYYMMDDHHmmss')
