@@ -1,5 +1,6 @@
-import json
+#!/usr/bin/env python
 
+import json
 import boto3
 import click
 import arrow
