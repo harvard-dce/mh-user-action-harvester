@@ -108,6 +108,7 @@ def harvest(start, end, wait, hostname, user, password, queue_name,
             break
 
         batch_count += 1
+        action_count += len(actions)
         log.info("Batch %d: %d actions", batch_count, len(actions))
 
         for action in actions:
@@ -115,7 +116,6 @@ def harvest(start, end, wait, hostname, user, password, queue_name,
             try:
                 rec = create_action_rec(action)
                 queue.send_message(MessageBody=json.dumps(rec))
-                action_count += 1
             except Exception as e:
                 log.error("Exception during rec creation for %s: %s", action.id, str(e))
                 fail_count += 1
@@ -132,9 +132,11 @@ def harvest(start, end, wait, hostname, user, password, queue_name,
                  'failures': fail_count
              })
 
-    if last_action is not None:
+    if action_count == 0:
+        last_action_ts = end
+    else:
         last_action_ts = arrow.get(last_action.created).format('YYYYMMDDHHmmss')
-        set_last_action_ts(last_action_ts)
+    set_last_action_ts(last_action_ts)
 
 def create_action_rec(action):
 
