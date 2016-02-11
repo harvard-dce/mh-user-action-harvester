@@ -35,7 +35,9 @@ pyhorn.client._session = requests.Session()
 
 log = logging.getLogger('mh-user-action-harvester')
 log.setLevel(logging.INFO)
-log.addHandler(SysLogHandler(address='/dev/log'))
+syslog = SysLogHandler(address='/dev/log')
+syslog.setFormatter(logging.Formatter("%(name)s %(levelname)s %(message)s"))
+log.addHandler(syslog)
 if LOGGLY_TOKEN is not None:
     log.addHandler(
         pyloggly.LogglyHandler(
