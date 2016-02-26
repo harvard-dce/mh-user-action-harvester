@@ -142,7 +142,7 @@ def create_action_rec(action):
 
     rec = {
         'action_id': action.id,
-        'created': action.created,
+        'timestamp': str(arrow.get(action.created).to('utc')),
         'mpid': action.mediapackageId,
         'session_id': action.sessionId['sessionId'],
         'huid': str(action.sessionId.get('userId')),
