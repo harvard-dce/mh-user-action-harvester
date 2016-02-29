@@ -170,11 +170,15 @@ def create_action_rec(action):
     else:
         try:
             rec['is_live'] = is_live(action, episode) and 1 or 0
+            series = episode.mediapackage.series
             rec['episode'] = {
                 'course': episode.mediapackage.seriestitle,
                 'title': episode.mediapackage.title,
-                'series': episode.mediapackage.series,
-                'type': episode.dcType
+                'series': series,
+                'type': episode.dcType,
+                'year': series[:4],
+                'term': series[4:6],
+                'cdn': series[6:11]
             }
         except Exception as e:
             pass
