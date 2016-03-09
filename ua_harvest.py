@@ -72,7 +72,7 @@ def harvest(start, end, wait, hostname, user, password, queue_name,
             batch_size, interval):
 
     mh = pyhorn.MHClient('http://' + hostname, user, password, timeout=30)
-    queue = sqs.create_queue(QueueName=queue_name)
+    queue = get_or_create_queue(queue_name)
 
     if end is None:
         end = arrow.now().format('YYYYMMDDHHmmss')
@@ -220,7 +220,17 @@ def get_last_action_ts():
         return None
 
 def get_or_create_bucket():
-    return s3.create_bucket(Bucket=S3_LAST_ACTION_TS_BUCKET) # this is idempotent
+    try:
+        s3.meta.client.head_bucket(Bucket=S3_LAST_ACTION_TS_BUCKET)
+        return s3.Bucket(S3_LAST_ACTION_TS_BUCKET)
+    except ClientError:
+        return s3.create_bucket(Bucket=S3_LAST_ACTION_TS_BUCKET)
+
+def get_or_create_queue(queue_name):
+    try:
+        return sqs.get_queue_by_name(QueueName=queue_name)
+    except ClientError:
+        return sqs.create_queue(QueueName=queue_name)
 
 
 if __name__ == '__main__':
