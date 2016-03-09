@@ -181,7 +181,8 @@ def create_action_rec(action):
                 'cdn': series[6:11]
             }
         except Exception as e:
-            pass
+            log.error("failed to create event record for action %s: %s",
+                      action.id, str(e))
 
     return rec
 
