@@ -164,25 +164,29 @@ def create_action_rec(action):
     # get the episode directly for easier caching
     episode = get_episode(action.client, action.mediapackageId)
 
-    if episode is None:
+    if episode is not None:
         rec['episode'] = {}
-        rec['is_live'] = 0
-    else:
+        rec['is_live'] = is_live(action, episode) and 1 or 0
+
         try:
-            rec['is_live'] = is_live(action, episode) and 1 or 0
+            rec['episode']['type'] = episode.dcType
+        except AttributeError:
+            log.warn("Missing type for action %s, episode %s", action.id, episode.id)
+
+        try:
             series = str(episode.mediapackage.series)
-            rec['episode'] = {
+            rec['episode'].update({
                 'course': episode.mediapackage.seriestitle,
                 'title': episode.mediapackage.title,
                 'series': series,
-                'type': episode.dcType,
                 'year': series[:4],
                 'term': series[4:6],
                 'cdn': series[6:11]
-            }
-        except Exception as e:
-            log.error("failed to create event record for action %s: %s",
-                      action.id, str(e))
+            })
+        except AttributeError:
+            log.warn("Missing series for action %s, episode %s", action.id, episode.id)
+    else:
+        log.warn("Missing episode for action %s", action.id)
 
     return rec
 
