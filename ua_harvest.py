@@ -62,17 +62,21 @@ s3 = boto3.resource('s3')
               help='Matterhorn rest user')
 @click.option('-p', '--password', default=MATTERHORN_REST_PASS,
               help='Matterhorn rest password')
+@click.option('-o', '--output', default='sqs',
+              help='where to send output. use "-" for json/stdout')
 @click.option('-q', '--queue-name', default=SQS_QUEUE_NAME,
               help='SQS queue name')
 @click.option('-b', '--batch-size', default=1000,
               help='number of actions per request')
 @click.option('-i', '--interval', default=DEFAULT_INTERVAL,
               help='Harvest action from this many mintues ago')
-def harvest(start, end, wait, hostname, user, password, queue_name,
+def harvest(start, end, wait, hostname, user, password, output, queue_name,
             batch_size, interval):
 
     mh = pyhorn.MHClient('http://' + hostname, user, password, timeout=30)
-    queue = get_or_create_queue(queue_name)
+
+    if output == 'sqs':
+        queue = get_or_create_queue(queue_name)
 
     if end is None:
         end = arrow.now().format('YYYYMMDDHHmmss')
@@ -115,7 +119,10 @@ def harvest(start, end, wait, hostname, user, password, queue_name,
             last_action = action
             try:
                 rec = create_action_rec(action)
-                queue.send_message(MessageBody=json.dumps(rec))
+                if output == 'sqs':
+                    queue.send_message(MessageBody=json.dumps(rec))
+                else:
+                    print json.dumps(rec)
             except Exception as e:
                 log.error("Exception during rec creation for %s: %s", action.id, str(e))
                 fail_count += 1
@@ -164,31 +171,45 @@ def create_action_rec(action):
     # get the episode directly for easier caching
     episode = get_episode(action.client, action.mediapackageId)
 
-    if episode is not None:
-        rec['episode'] = {}
-        rec['is_live'] = is_live(action, episode) and 1 or 0
+    rec['episode'] = {}
+    rec['is_live'] = 0
 
-        try:
-            rec['episode']['type'] = episode.dcType
-        except AttributeError:
-            log.warn("Missing type for action %s, episode %s", action.id, episode.id)
+    if episode is None:
+        log.warn("Missing episode for action %s", action.id)
+    else:
+        if is_live(action, episode):
+            rec['is_live'] = 1
+
+        rec['episode'] = {
+            'title': episode.mediapackage.title,
+            'duration': int(episode.mediapackage.duration),
+            'start': episode.mediapackage.start
+        }
 
         try:
             series = str(episode.mediapackage.series)
             rec['episode'].update({
                 'course': episode.mediapackage.seriestitle,
-                'title': episode.mediapackage.title,
                 'series': series,
                 'year': series[:4],
                 'term': series[4:6],
                 'cdn': series[6:11]
             })
         except AttributeError:
-            log.warn("Missing series for action %s, episode %s", action.id, episode.id)
-    else:
-        log.warn("Missing episode for action %s", action.id)
+            log.warn("Missing series for episode %s", episode.id)
+
+        try:
+            rec['episode']['type'] = episode.dcType
+        except AttributeError:
+            log.warn("Missing type for episode %s", episode.id)
+
+        try:
+            rec['episode']['description'] = episode.dcDescription
+        except AttributeError:
+            log.warn("Missing description for episode %s", episode.id)
 
     return rec
+
 
 @lru_cache(1000)
 def get_episode(client, mpid):
