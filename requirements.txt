@@ -5,4 +5,4 @@ pyloggly
 repoze.lru
 requests
 python-dotenv
-pyhorn==0.5.0
+pyhorn==0.6.0

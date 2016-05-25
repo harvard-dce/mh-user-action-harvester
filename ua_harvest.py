@@ -218,8 +218,8 @@ def get_episode(client, mpid):
     that we can better control the caching (via lru_cache memoization)
     """
     try:
-        return client.search_episode(mpid)
-    except AttributeError:
+        return client.search_episodes(id=mpid, includeDeleted=True)[0]
+    except IndexError:
         return None
 
 def is_live(action, episode):
