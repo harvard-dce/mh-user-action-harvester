@@ -5,16 +5,16 @@ import json
 import boto3
 import click
 import arrow
-import pyhorn
 import logging
-import requests
 import pyloggly
-import requests_cache
 from os import getenv
 from os.path import dirname, join
 
+import pyhorn
+# force all calls to the episode search endpoint to use includeDeleted=true
+pyhorn.endpoints.search.SearchEndpoint._kwarg_map['episode']['includeDeleted'] = True
+
 import time
-from repoze.lru import lru_cache
 from botocore.exceptions import ClientError
 
 from dotenv import load_dotenv
@@ -29,10 +29,6 @@ LOGGLY_TAGS = getenv('LOGGLY_TAGS')
 S3_LAST_ACTION_TS_BUCKET = getenv('S3_LAST_ACTION_TS_BUCKET', 'mh-user-action-harvester')
 S3_LAST_ACTION_TS_KEY = getenv('S3_LAST_ACTION_TS_KEY')
 SQS_QUEUE_NAME = getenv('SQS_QUEUE_NAME')
-
-# sigh. pyhorn caching is so dumb.
-requests_cache.uninstall_cache()
-pyhorn.client._session = requests.Session()
 
 log = logging.getLogger('mh-user-action-harvester')
 log.setLevel(logging.INFO)
@@ -168,18 +164,14 @@ def create_action_rec(action):
     for idx, ip in enumerate(ips, 1):
         rec['proxy%d' % idx] = ip
 
-    # get the episode directly for easier caching
-    episode = get_episode(action.client, action.mediapackageId)
+    episode = action.episode
 
+    rec['is_live'] = int(action.is_live())
     rec['episode'] = {}
-    rec['is_live'] = 0
 
     if episode is None:
         log.warn("Missing episode for action %s", action.id)
     else:
-        if is_live(action, episode):
-            rec['is_live'] = 1
-
         rec['episode'] = {
             'title': episode.mediapackage.title,
             'duration': int(episode.mediapackage.duration),
@@ -210,26 +202,6 @@ def create_action_rec(action):
 
     return rec
 
-
-@lru_cache(1000)
-def get_episode(client, mpid):
-    """
-    get the episode direct from client rather than from action.episode so
-    that we can better control the caching (via lru_cache memoization)
-    """
-    try:
-        return client.search_episodes(id=mpid, includeDeleted=True)[0]
-    except IndexError:
-        return None
-
-def is_live(action, episode):
-    """
-    here again, if we call action.is_live() we won't get the cached episode resp
-    """
-    action_created = arrow.get(action.created)
-    mp_start = arrow.get(episode.mediapackage.start)
-    mp_duration_sec = int(episode.mediapackage.duration) / 1000
-    return action_created <= mp_start.replace(seconds=+mp_duration_sec)
 
 # s3 state bucket helpers
 def set_last_action_ts(last_action_ts):

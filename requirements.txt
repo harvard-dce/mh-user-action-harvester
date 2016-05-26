@@ -2,7 +2,6 @@ boto3
 arrow
 click
 pyloggly
-repoze.lru
 requests
 python-dotenv
-pyhorn==0.6.0
+pyhorn==0.7.0
