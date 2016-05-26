@@ -29,6 +29,7 @@ LOGGLY_TAGS = getenv('LOGGLY_TAGS')
 S3_LAST_ACTION_TS_BUCKET = getenv('S3_LAST_ACTION_TS_BUCKET', 'mh-user-action-harvester')
 S3_LAST_ACTION_TS_KEY = getenv('S3_LAST_ACTION_TS_KEY')
 SQS_QUEUE_NAME = getenv('SQS_QUEUE_NAME')
+MAX_START_END_SPAN_SECONDS = 3600
 
 log = logging.getLogger('mh-user-action-harvester')
 log.setLevel(logging.INFO)
@@ -66,8 +67,10 @@ s3 = boto3.resource('s3')
               help='number of actions per request')
 @click.option('-i', '--interval', default=DEFAULT_INTERVAL,
               help='Harvest action from this many mintues ago')
+@click.option('--disable-start-end-span-check', is_flag=True,
+              help="Don't abort on too-long start-end time spans")
 def harvest(start, end, wait, hostname, user, password, output, queue_name,
-            batch_size, interval):
+            batch_size, interval, disable_start_end_span_check):
 
     mh = pyhorn.MHClient('http://' + hostname, user, password, timeout=30)
 
@@ -86,6 +89,18 @@ def harvest(start, end, wait, hostname, user, password, output, queue_name,
 
     log.info("Fetching user actions from %s to %s", start, end)
 
+    start_end_span = arrow.get(end, 'YYYYMMDDHHmmss') - arrow.get(start, 'YYYYMMDDHHmmss')
+    log.info("Start-End time span in seconds: %d", start_end_span.seconds,
+             extra={'start_end_span_seconds': start_end_span.seconds})
+
+    if not disable_start_end_span_check:
+        if start_end_span.seconds > MAX_START_END_SPAN_SECONDS:
+            log.error("Start-End time span %d is larger than %d",
+                      start_end_span.seconds,
+                      MAX_START_END_SPAN_SECONDS
+                      )
+            raise click.Abort()
+
     offset = 0
     batch_count = 0
     action_count = 0
@@ -101,7 +116,11 @@ def harvest(start, end, wait, hostname, user, password, output, queue_name,
             'offset': offset
         }
 
-        actions = mh.user_actions(**req_params)
+        try:
+            actions = mh.user_actions(**req_params)
+        except Exception, e:
+            log.error("API request failed: %s", str(e))
+            raise
 
         if len(actions) == 0:
             log.info("No more actions")
@@ -135,11 +154,15 @@ def harvest(start, end, wait, hostname, user, password, output, queue_name,
                  'failures': fail_count
              })
 
-    if action_count == 0:
-        last_action_ts = end
-    else:
-        last_action_ts = arrow.get(last_action.created).format('YYYYMMDDHHmmss')
-    set_last_action_ts(last_action_ts)
+    try:
+        if action_count == 0:
+            last_action_ts = end
+        else:
+            last_action_ts = arrow.get(last_action.created).format('YYYYMMDDHHmmss')
+        set_last_action_ts(last_action_ts)
+        log.info("Setting last action timestamp to %s", last_action_ts)
+    except Exception, e:
+        log.error("Failed setting last action timestamp: %s", str(e))
 
 def create_action_rec(action):
 
