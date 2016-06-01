@@ -216,12 +216,12 @@ def create_action_rec(action):
         try:
             rec['episode']['type'] = episode.dcType
         except AttributeError:
-            log.warn("Missing type for episode %s", episode.id)
+            pass
 
         try:
             rec['episode']['description'] = episode.dcDescription
         except AttributeError:
-            log.warn("Missing description for episode %s", episode.id)
+            pass
 
     return rec
 
