@@ -18,6 +18,8 @@ This command fetches batches of useraction events based on a `--start` and `--en
 
 There is one additional option, `--disable-start-end-span-check`, that prevents the harvester's start/end timestamps from growing too large. See details below.
 
+To reduce load on the engage server during harvesting, redis is used to cache the episode data between harvests.
+
 ### `load_episodes`
 
 This command fetches episode metadata from the Matterhorn search endpoint. By default it looks for episodes that have been created in the past 1 day. This can be controlled with the `--created_from_days_ago` option. The episode records are augmented with additional information about live stream start/stop times and availability via the admin node's workflow API endpoint. The resulting records are sent to an Elasticsearch index, identified by `--es_host` and `--es_index`.
@@ -55,6 +57,9 @@ Name of the SQS queue to send useraction events. The queue will be created if it
 
 #### ELASTICSEARCH_HOST
 Hostname or IP of the Elasticsearch instance in which to index the episode records.
+
+#### EPISODE_CACHE_EXPIRE
+Time-to-live value for cached episodes fetched during the useraction harvesting. Defaults to 1800s (15m).
 
 ## useraction harvest too-big timespan protection
 

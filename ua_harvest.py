@@ -5,10 +5,12 @@ import json
 import boto3
 import click
 import arrow
+import redis
 import logging
 import pyloggly
 from os import getenv
 from os.path import dirname, join
+from pyhorn.endpoints.search import SearchEpisode
 
 import re
 from elasticsearch import Elasticsearch
@@ -24,6 +26,7 @@ from dotenv import load_dotenv
 load_dotenv(join(dirname(__file__), '.env'))
 
 MAX_START_END_SPAN_SECONDS = 3600
+EPISODE_CACHE_EXPIRE = getenv('EPISODE_CACHE_EXPIRE', 1800) # default to 15m
 
 log = logging.getLogger('mh-user-action-harvester')
 log.setLevel(logging.DEBUG)
@@ -44,6 +47,7 @@ if LOGGLY_TOKEN is not None:
 
 sqs = boto3.resource('sqs')
 s3 = boto3.resource('s3')
+r = redis.StrictRedis()
 
 @click.group()
 def cli():
@@ -73,7 +77,9 @@ def cli():
 def harvest(start, end, wait, engage_host, user, password, output, queue_name,
             batch_size, interval, disable_start_end_span_check):
 
-    mh = pyhorn.MHClient('http://' + engage_host, user, password, timeout=30)
+    # we rely on our own redis cache, so disable pyhorn's internal response caching
+    mh = pyhorn.MHClient('http://' + engage_host, user, password,
+                         timeout=30, cache_enabled=False)
 
     if output == 'sqs':
         queue = get_or_create_queue(queue_name)
@@ -189,7 +195,7 @@ def create_action_rec(action):
     for idx, ip in enumerate(ips, 1):
         rec['proxy%d' % idx] = ip
 
-    episode = action.episode
+    episode = get_episode(action)
 
     rec['is_live'] = int(action.is_live())
     rec['episode'] = {}
@@ -226,6 +232,28 @@ def create_action_rec(action):
             pass
 
     return rec
+
+def get_episode(action):
+    cached_ep = r.get(action.mediapackageId)
+    if cached_ep is not None:
+        log.debug("episode cache hit for %s", action.mediapackageId)
+        episode_data = json.loads(cached_ep)
+        episode_data['__from_cache'] = True
+        # recreate the SearchEpisode obj using the current client
+        episode = SearchEpisode(episode_data, action.client)
+        # make sure anything else that might access the action.episode property
+        # gets our cached version
+        action._property_stash['episode'] = episode
+    else:
+        log.debug("episode cache miss for %s", action.mediapackageId)
+        episode = action.episode
+        r.setex(
+            action.mediapackageId,
+            EPISODE_CACHE_EXPIRE,
+            json.dumps(episode._raw)
+        )
+    return episode
+
 
 @cli.command()
 @click.option('-c', '--created_from_days_ago', type=int, default=1,
