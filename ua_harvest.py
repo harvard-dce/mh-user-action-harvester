@@ -25,7 +25,7 @@ from botocore.exceptions import ClientError
 from dotenv import load_dotenv
 load_dotenv(join(dirname(__file__), '.env'))
 
-MAX_START_END_SPAN_SECONDS = 3600
+MAX_START_END_SPAN = getenv('MAX_START_END_SPAN')
 EPISODE_CACHE_EXPIRE = getenv('EPISODE_CACHE_EXPIRE', 1800) # default to 15m
 
 log = logging.getLogger('mh-user-action-harvester')
@@ -101,11 +101,11 @@ def harvest(start, end, wait, engage_host, user, password, output, queue_name,
     log.info("Start-End time span in seconds: %d", start_end_span.seconds,
              extra={'start_end_span_seconds': start_end_span.seconds})
 
-    if not disable_start_end_span_check:
-        if start_end_span.seconds > MAX_START_END_SPAN_SECONDS:
+    if MAX_START_END_SPAN is not None and not disable_start_end_span_check:
+        if start_end_span.seconds > MAX_START_END_SPAN:
             log.error("Start-End time span %d is larger than %d",
                       start_end_span.seconds,
-                      MAX_START_END_SPAN_SECONDS
+                      MAX_START_END_SPAN
                       )
             raise click.Abort()
 
