@@ -28,8 +28,9 @@ load_dotenv(join(dirname(__file__), '.env'))
 MAX_START_END_SPAN = getenv('MAX_START_END_SPAN')
 EPISODE_CACHE_EXPIRE = getenv('EPISODE_CACHE_EXPIRE', 1800) # default to 15m
 
+log_level = getenv('LOG_LEVEL', 'INFO')
 log = logging.getLogger('mh-user-action-harvester')
-log.setLevel(logging.DEBUG)
+log.setLevel(logging.getLevelName(log_level.upper()))
 console = logging.StreamHandler(stream=sys.stdout)
 console.setFormatter(logging.Formatter("%(name)s %(levelname)s %(message)s"))
 log.addHandler(console)
