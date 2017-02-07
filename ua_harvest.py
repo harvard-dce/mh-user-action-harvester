@@ -175,6 +175,10 @@ def harvest(start, end, wait, engage_host, user, password, output, queue_name,
 
 def create_action_rec(action):
 
+    is_playing = False
+    if action.isPlaying > 0:
+        is_playing = True
+
     rec = {
         'action_id': action.id,
         'timestamp': str(arrow.get(action.created).to('utc')),
@@ -187,7 +191,7 @@ def create_action_rec(action):
             'inpoint': action.inpoint,
             'outpoint': action.outpoint,
             'length': action.length,
-            'is_playing': action.isPlaying
+            'is_playing': is_playing
         }
     }
 
@@ -198,7 +202,10 @@ def create_action_rec(action):
 
     episode = get_episode(action)
 
-    rec['is_live'] = int(action.is_live())
+    rec['is_live'] = 0
+    if action.isPlaying == 2:
+        rec['is_live'] = 1
+
     rec['episode'] = {}
 
     if episode is None:
