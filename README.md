@@ -1,5 +1,7 @@
 # mh-user-action-harvester
 
+**NOTE**: this project has been deprecated/superceeded by the new, combined ZOOM + Opencast user analtyics harvester, [harvard-dce-user-analytics](https://github.com/harvard-dce/dce-user-analytics)
+
 A python script for fetching useraction events and related metadata from Opencast Matterhorn. The script uses the [pyhorn](https://github.com/harvard-dce/pyhorn) library for interacting with the Matterhorn API. Harvested useractions are fed to an SQS queue.
 
 ## Setup
